@@ -12,6 +12,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)BuildGenerator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceStubGenerator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ITypeSymbolExtensions.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)ParseGenerator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StubGeneratorModel.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ImmutableEquatableArray.cs" />
   </ItemGroup>
