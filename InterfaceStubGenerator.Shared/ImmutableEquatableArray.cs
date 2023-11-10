@@ -1,6 +1,6 @@
 ﻿using System.Collections;
 
-namespace DefaultNamespace;
+namespace Refit.Generator;
 
 
 /// <summary>

@@ -9,6 +9,7 @@
     <Import_RootNamespace>InterfaceStubGenerator.Shared</Import_RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)BuildGenerator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)InterfaceStubGenerator.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ITypeSymbolExtensions.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)StubGeneratorModel.cs" />
