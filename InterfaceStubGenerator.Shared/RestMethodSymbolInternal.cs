@@ -9,7 +9,7 @@ namespace Refit.Generator;
  /// <summary>
 /// RestMethodInfo
 /// </summary>
-public record RestMethodInfo(
+public record RestMethodSymbol(
     string Name,
     Type HostingType,
     IMethodSymbol MethodSymbol,
@@ -215,7 +215,7 @@ internal class RestMethodSymbolInternal
         return headerIndex;
     }
 
-    public RestMethodInfo ToRestMethodInfo() =>
+    public RestMethodSymbol ToRestMethodSymbol() =>
         new(Name, Type, MethodInfo, RelativePath, ReturnType);
 
     static Dictionary<int, string> BuildRequestPropertyMap(IParameterSymbol[] parameterArray, WellKnownTypes knownTypes)
@@ -775,4 +775,3 @@ public class RestMethodParameterProperty
     /// </value>
     public IPropertySymbol PropertyInfo { get; set; }
 }
-
