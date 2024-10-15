@@ -18,7 +18,7 @@ public record RestMethodInfo(
 );
 
 [DebuggerDisplay("{MethodInfo}")]
-internal class RestMethodInfoInternal
+internal class RestMethodSymbolInternal
 {
     private int HeaderCollectionParameterIndex { get; set; }
     public string Name { get; set; }
@@ -50,7 +50,7 @@ internal class RestMethodInfoInternal
     static readonly HttpMethod PatchMethod = new("PATCH");
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
-    public RestMethodInfoInternal(
+    public RestMethodSymbolInternal(
         Type targetInterface,
         IMethodSymbol methodSymbol,
         WellKnownTypes knownTypes,
@@ -92,7 +92,7 @@ internal class RestMethodInfoInternal
 
         Headers = ParseHeaders(methodSymbol, knownTypes);
         HeaderParameterMap = BuildHeaderParameterMap(ParameterSymbolArray, knownTypes);
-        HeaderCollectionParameterIndex = RestMethodInfoInternal.GetHeaderCollectionParameterIndex(
+        HeaderCollectionParameterIndex = RestMethodSymbolInternal.GetHeaderCollectionParameterIndex(
             ParameterSymbolArray, knownTypes
         );
         PropertyParameterMap = BuildRequestPropertyMap(ParameterSymbolArray, knownTypes);
