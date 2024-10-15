@@ -12,9 +12,9 @@ namespace Refit.Generator;
 public record RestMethodInfo(
     string Name,
     Type HostingType,
-    MethodInfo MethodInfo,
+    IMethodSymbol MethodSymbol,
     string RelativePath,
-    Type ReturnType
+    ITypeSymbol ReturnType
 );
 
 [DebuggerDisplay("{MethodInfo}")]
@@ -39,9 +39,9 @@ internal class RestMethodInfoInternal
     public Dictionary<int, Tuple<string, string>> AttachmentNameMap { get; set; }
     public IParameterSymbol[] ParameterSymbolArray { get; set; }
     public Dictionary<int, RestMethodParameterInfo> ParameterMap { get; set; }
-    public Type ReturnType { get; set; }
-    public Type ReturnResultType { get; set; }
-    public Type DeserializedResultType { get; set; }
+    public ITypeSymbol ReturnType { get; set; }
+    public ITypeSymbol ReturnResultType { get; set; }
+    public ITypeSymbol DeserializedResultType { get; set; }
     public RefitSettings RefitSettings { get; set; }
     public bool IsApiResponse { get; }
     public bool ShouldDisposeResponse { get; private set; }
@@ -77,8 +77,8 @@ internal class RestMethodInfoInternal
             : string.Empty;
 
         VerifyUrlPathIsSane(RelativePath);
-        DetermineReturnTypeInfo(methodSymbol);
-        DetermineIfResponseMustBeDisposed();
+        DetermineReturnTypeInfo(methodSymbol, knownTypes);
+        DetermineIfResponseMustBeDisposed(knownTypes);
 
         // Exclude cancellation token parameters from this list
         var cancellationToken = knownTypes.Get<CancellationToken>();
@@ -86,8 +86,8 @@ internal class RestMethodInfoInternal
             .Parameters
             .Where(p => !SymbolEqualityComparer.Default.Equals(cancellationToken, p))
             .ToArray();
-        ParameterMap = BuildParameterMap(RelativePath, ParameterSymbolArray);
-        BodyParameterInfo = FindBodyParameter(ParameterSymbolArray, IsMultipart, hma.Method);
+        ParameterMap = BuildParameterMap(RelativePath, ParameterSymbolArray, knownTypes);
+        BodyParameterInfo = FindBodyParameter(ParameterSymbolArray, IsMultipart, hma.Method, knownTypes);
         AuthorizeParameterInfo = FindAuthorizationParameter(ParameterSymbolArray, knownTypes);
 
         Headers = ParseHeaders(methodSymbol, knownTypes);
@@ -113,14 +113,14 @@ internal class RestMethodInfoInternal
                     continue;
                 }
 
-                var attachmentName = GetAttachmentNameForParameter(ParameterSymbolArray[i]);
+                var attachmentName = GetAttachmentNameForParameter(ParameterSymbolArray[i], knownTypes);
                 if (attachmentName == null)
                     continue;
 
                 attachmentDict ??= [];
                 attachmentDict[i] = Tuple.Create(
                     attachmentName,
-                    GetUrlNameForParameter(ParameterSymbolArray[i])
+                    GetUrlNameForParameter(ParameterSymbolArray[i], knownTypes)
                 );
             }
         }
@@ -143,34 +143,38 @@ internal class RestMethodInfoInternal
             }
 
             queryDict ??= [];
-            queryDict.Add(i, GetUrlNameForParameter(ParameterSymbolArray[i]));
+            queryDict.Add(i, GetUrlNameForParameter(ParameterSymbolArray[i], knownTypes));
         }
 
-        QueryParameterMap = queryDict ?? EmptyDictionary<int, string>.Get();
+        QueryParameterMap = queryDict ?? new Dictionary<int, string>();
 
         var ctParamEnumerable = methodSymbol
-            .GetParameters()
-            .Where(p => p.ParameterType == typeof(CancellationToken))
-            .TryGetSingle(out var ctParam);
-        if (ctParamEnumerable == EnumerablePeek.Many)
+            .Parameters
+            .Where(p => SymbolEqualityComparer.Default.Equals(p.Type, cancellationToken))
+            .ToArray();
+        if (ctParamEnumerable.Length > 1)
         {
             throw new ArgumentException(
                 $"Argument list to method \"{methodSymbol.Name}\" can only contain a single CancellationToken"
             );
         }
 
-        CancellationToken = ctParam;
+        CancellationToken = ctParamEnumerable.First();
 
-        QueryUriFormat =  methodSymbol.GetCustomAttribute<QueryUriFormatAttribute>()?.UriFormat
+        QueryUriFormat =  methodSymbol.AccessFirstOrDefault<QueryUriFormatAttribute>(knownTypes)?.UriFormat
                           ?? UriFormat.UriEscaped;
 
+        var apiResponse = knownTypes.Get(typeof(ApiResponse<>));
+        var unboundIApiResponse = knownTypes.Get(typeof(IApiResponse<>));
+        var iApiResponse = knownTypes.Get<IApiResponse>();
+
         IsApiResponse =
-            ReturnResultType!.GetTypeInfo().IsGenericType
+            ReturnResultType is INamedTypeSymbol {IsGenericType: true } namedTypeSymbol
                 && (
-                    ReturnResultType!.GetGenericTypeDefinition() == typeof(ApiResponse<>)
-                    || ReturnResultType.GetGenericTypeDefinition() == typeof(IApiResponse<>)
+                    SymbolEqualityComparer.Default.Equals(namedTypeSymbol.OriginalDefinition, apiResponse)
+                    || SymbolEqualityComparer.Default.Equals(namedTypeSymbol.OriginalDefinition, unboundIApiResponse)
                 )
-            || ReturnResultType == typeof(IApiResponse);
+            || SymbolEqualityComparer.Default.Equals(ReturnResultType, iApiResponse);
     }
 
     public bool HasHeaderCollection => HeaderCollectionParameterIndex >= 0;
@@ -181,6 +185,8 @@ internal class RestMethodInfoInternal
     {
         var headerIndex = -1;
 
+        var genericDictionary = knownTypes.Get(typeof(IDictionary<string, string>));
+
         for (var i = 0; i < parameterArray.Length; i++)
         {
             var param = parameterArray[i];
@@ -188,8 +194,9 @@ internal class RestMethodInfoInternal
 
             if (headerCollection == null) continue;
 
+            // TODO: this check may not work in nullable contexts.
             //opted for IDictionary<string, string> semantics here as opposed to the looser IEnumerable<KeyValuePair<string, string>> because IDictionary will enforce uniqueness of keys
-            if (param.ParameterType.IsAssignableFrom(typeof(IDictionary<string, string>)))
+            if (SymbolEqualityComparer.Default.Equals(param.Type, genericDictionary))
             {
                 // throw if there is already a HeaderCollection parameter
                 if(headerIndex >= 0)
@@ -200,7 +207,7 @@ internal class RestMethodInfoInternal
             else
             {
                 throw new ArgumentException(
-                    $"HeaderCollection parameter of type {param.ParameterType.Name} is not assignable from IDictionary<string, string>"
+                    $"HeaderCollection parameter of type {param.Type.Name} is not assignable from IDictionary<string, string>"
                 );
             }
         }
@@ -234,11 +241,12 @@ internal class RestMethodInfoInternal
         return propertyMap ?? new Dictionary<int, string>();
     }
 
-    static IEnumerable<PropertyInfo> GetParameterProperties(ParameterInfo parameter)
+    static IEnumerable<IPropertySymbol> GetParameterProperties(IParameterSymbol parameter)
     {
         return parameter
-            .ParameterType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(static p => p.CanRead && p.GetMethod?.IsPublic == true);
+            .Type.GetMembers().OfType<IPropertySymbol>()
+            .Where(static p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+            .Where(static p => p.GetMethod is { DeclaredAccessibility: Accessibility.Public });
     }
 
     static void VerifyUrlPathIsSane(string relativePath)
@@ -280,10 +288,10 @@ internal class RestMethodInfoInternal
             );
             //if the param is an lets make a dictionary for all it's potential parameters
             var objectParamValidationDict = parameterSymbol
-                .Where(x => x.ParameterType.GetTypeInfo().IsClass)
+                .Where(x => x.Type.IsReferenceType)
                 .SelectMany(x => GetParameterProperties(x).Select(p => Tuple.Create(x, p)))
                 .GroupBy(
-                    i => $"{i.Item1.Name}.{GetUrlNameForProperty(i.Item2)}".ToLowerInvariant()
+                    i => $"{i.Item1.Name}.{GetUrlNameForProperty(i.Item2, knownTypes)}".ToLowerInvariant()
                 )
                 .ToDictionary(k => k.Key, v => v.First());
             foreach (var match in parameterizedParts)
@@ -302,11 +310,11 @@ internal class RestMethodInfoInternal
 
                 if (paramValidationDict.TryGetValue(name, out var value)) //if it's a standard parameter
                 {
-                    var paramType = value.ParameterType;
-                    if (isRoundTripping && paramType != typeof(string))
+                    var paramType = value.Type;
+                    if (isRoundTripping && paramType.SpecialType != SpecialType.System_String)
                     {
                         throw new ArgumentException(
-                            $"URL {relativePath} has round-tripping parameter {rawName}, but the type of matched method parameter is {paramType.FullName}. It must be a string."
+                            $"URL {relativePath} has round-tripping parameter {rawName}, but the type of matched method parameter is {paramType.Name}. It must be a string."
                         );
                     }
                     var parameterType = isRoundTripping
@@ -398,17 +406,16 @@ internal class RestMethodInfoInternal
         return aliasAttr != null ? aliasAttr.Name : propInfo.Name;
     }
 
-    static string GetAttachmentNameForParameter(ParameterInfo paramInfo)
+    static string GetAttachmentNameForParameter(IParameterSymbol paramSymbol, WellKnownTypes knownTypes)
     {
 #pragma warning disable CS0618 // Type or member is obsolete
-        var nameAttr = paramInfo
-            .GetCustomAttributes<AttachmentNameAttribute>(true)
+        var nameAttr = paramSymbol
+            .AccessFirstOrDefault<AttachmentNameAttribute>(knownTypes);
 #pragma warning restore CS0618 // Type or member is obsolete
-            .FirstOrDefault();
 
         // also check for AliasAs
         return nameAttr?.Name
-            ?? paramInfo.GetCustomAttributes<AliasAsAttribute>(true).FirstOrDefault()?.Name!;
+            ?? paramSymbol.AccessFirstOrDefault<AliasAsAttribute>(knownTypes)?.Name!;
     }
 
     Tuple<BodySerializationMethod, bool, int>? FindBodyParameter(
@@ -428,16 +435,16 @@ internal class RestMethodInfoInternal
                 x =>
                 (
                     Parameter: x,
-                    BodyAttribute: x.AccessFirstOrDefault<BodyAttribute>();
+                    BodyAttribute: x.AccessFirstOrDefault<BodyAttribute>(knownTypes)
                 )
             )
             .Where(x => x.BodyAttribute != null)
-            .TryGetSingle(out var bodyParam);
+            .ToArray();
 
         // multipart requests may not contain a body, implicit or explicit
         if (isMultipart)
         {
-            if (bodyParamEnumerable != EnumerablePeek.Empty)
+            if (bodyParamEnumerable.Length > 0)
             {
                 throw new ArgumentException(
                     "Multipart requests may not contain a Body parameter"
@@ -446,14 +453,15 @@ internal class RestMethodInfoInternal
             return null;
         }
 
-        if (bodyParamEnumerable == EnumerablePeek.Many)
+        if (bodyParamEnumerable.Length > 1)
         {
             throw new ArgumentException("Only one parameter can be a Body parameter");
         }
 
         // #1, body attribute wins
-        if (bodyParamEnumerable == EnumerablePeek.Single)
+        if (bodyParamEnumerable.Length == 1)
         {
+            var bodyParam = bodyParamEnumerable.First();
             return Tuple.Create(
                 bodyParam!.BodyAttribute!.SerializationMethod,
                 bodyParam.BodyAttribute.Buffered ?? RefitSettings.Buffered,
@@ -476,24 +484,25 @@ internal class RestMethodInfoInternal
         var refParamEnumerable = parameterArray
             .Where(
                 pi =>
-                    !pi.ParameterType.GetTypeInfo().IsValueType
-                    && pi.ParameterType != typeof(string)
-                    && pi.GetCustomAttribute<QueryAttribute>() == null
-                    && pi.GetCustomAttribute<HeaderCollectionAttribute>() == null
-                    && pi.GetCustomAttribute<PropertyAttribute>() == null
+                    !pi.Type.IsValueType
+                    && pi.Type.SpecialType != SpecialType.System_String
+                    && pi.AccessFirstOrDefault<QueryAttribute>(knownTypes) == null
+                    && pi.AccessFirstOrDefault<HeaderCollectionAttribute>(knownTypes) == null
+                    && pi.AccessFirstOrDefault<PropertyAttribute>(knownTypes) == null
             )
-            .TryGetSingle(out var refParam);
+            .ToArray();
 
         // Check for rule #3
-        if (refParamEnumerable == EnumerablePeek.Many)
+        if (refParamEnumerable.Length > 1)
         {
             throw new ArgumentException(
                 "Multiple complex types found. Specify one parameter as the body using BodyAttribute"
             );
         }
 
-        if (refParamEnumerable == EnumerablePeek.Single)
+        if (refParamEnumerable.Length == 1)
         {
+            var refParam = refParamEnumerable.First();
             return Tuple.Create(
                 BodySerializationMethod.Serialized,
                 RefitSettings.Buffered,
@@ -537,25 +546,21 @@ internal class RestMethodInfoInternal
     static Dictionary<string, string?> ParseHeaders(IMethodSymbol methodSymbol, WellKnownTypes knownTypes)
     {
         var inheritedAttributes =
-            methodSymbol.DeclaringType != null
+            methodSymbol.ContainingType != null
                 ? methodSymbol
-                    .DeclaringType.GetInterfaces()
-                    .SelectMany(i => i.GetTypeInfo().GetCustomAttributes(true))
+                    .ContainingType.AllInterfaces
+                    .SelectMany(i => i.Access<HeadersAttribute>(knownTypes))
                     .Reverse()
                 : [];
 
-        var declaringTypeAttributes =
-            methodSymbol.DeclaringType != null
-                ? methodSymbol.DeclaringType.GetTypeInfo().GetCustomAttributes(true)
-                : [];
+        var declaringTypeAttributes = methodSymbol.ContainingType!.Access<HeadersAttribute>(knownTypes);
 
         // Headers set on the declaring type have to come first,
         // so headers set on the method can replace them. Switching
         // the order here will break stuff.
         var headers = inheritedAttributes
             .Concat(declaringTypeAttributes)
-            .Concat(methodSymbol.GetCustomAttributes(true))
-            .OfType<HeadersAttribute>()
+            .Concat(methodSymbol.Access<HeadersAttribute>(knownTypes))
             .SelectMany(ha => ha.Headers);
 
         Dictionary<string, string?>? ret = null;
@@ -600,43 +605,55 @@ internal class RestMethodInfoInternal
         return ret ?? new Dictionary<int, string>();
     }
 
-    void DetermineReturnTypeInfo(IMethodSymbol methodInfo)
+    void DetermineReturnTypeInfo(IMethodSymbol methodInfo, WellKnownTypes knownTypes)
     {
+        var unboundTaskSymbol = knownTypes.Get(typeof(Task<>));
+        var valueTaskSymbol = knownTypes.Get(typeof(ValueTask<>));
+        var observableSymbol = knownTypes.Get(typeof(IObservable<>));
+
+        var taskSymbol = knownTypes.Get(typeof(Task));
+
         var returnType = methodInfo.ReturnType;
         if (
-            returnType.IsGenericType
+            returnType is INamedTypeSymbol { IsGenericType: true } namedType
             && (
-                methodInfo.ReturnType.GetGenericTypeDefinition() == typeof(Task<>)
-                || methodInfo.ReturnType.GetGenericTypeDefinition() == typeof(ValueTask<>)
-                || methodInfo.ReturnType.GetGenericTypeDefinition() == typeof(IObservable<>)
+                SymbolEqualityComparer.Default.Equals(namedType.OriginalDefinition, unboundTaskSymbol)
+                || SymbolEqualityComparer.Default.Equals(namedType.OriginalDefinition, valueTaskSymbol)
+                || SymbolEqualityComparer.Default.Equals(namedType.OriginalDefinition, observableSymbol)
             )
         )
         {
             ReturnType = returnType;
-            ReturnResultType = returnType.GetGenericArguments()[0];
+            ReturnResultType = namedType.TypeArguments[0];
+
+            var unboundApiResponseSymbol = knownTypes.Get(typeof(ApiResponse<>));
+            var unboundIApiResponseSymbol = knownTypes.Get(typeof(IApiResponse<>));
+
+            var iApiResponseSymbol = knownTypes.Get<IApiResponse>();
 
             if (
-                ReturnResultType.IsGenericType
+                ReturnResultType is INamedTypeSymbol {IsGenericType: true} returnResultNamedType
                 && (
-                    ReturnResultType.GetGenericTypeDefinition() == typeof(ApiResponse<>)
-                    || ReturnResultType.GetGenericTypeDefinition() == typeof(IApiResponse<>)
+                    SymbolEqualityComparer.Default.Equals(returnResultNamedType.OriginalDefinition, unboundApiResponseSymbol)
+                    || SymbolEqualityComparer.Default.Equals(returnResultNamedType.OriginalDefinition, unboundIApiResponseSymbol)
                 )
             )
             {
-                DeserializedResultType = ReturnResultType.GetGenericArguments()[0];
+                DeserializedResultType = returnResultNamedType.TypeArguments[0];
             }
-            else if (ReturnResultType == typeof(IApiResponse))
+            else if (SymbolEqualityComparer.Default.Equals(ReturnResultType, iApiResponseSymbol))
             {
-                DeserializedResultType = typeof(HttpContent);
+                DeserializedResultType = knownTypes.Get<HttpContent>();
             }
             else
                 DeserializedResultType = ReturnResultType;
         }
-        else if (returnType == typeof(Task))
+        else if (SymbolEqualityComparer.Default.Equals(returnType, taskSymbol))
         {
+            var voidSymbol = knownTypes.Get(typeof(void));
             ReturnType = methodInfo.ReturnType;
-            ReturnResultType = typeof(void);
-            DeserializedResultType = typeof(void);
+            ReturnResultType = voidSymbol;
+            DeserializedResultType = voidSymbol;
         }
         else
             throw new ArgumentException(
@@ -644,12 +661,118 @@ internal class RestMethodInfoInternal
             );
     }
 
-    void DetermineIfResponseMustBeDisposed()
+    void DetermineIfResponseMustBeDisposed(WellKnownTypes knownTypes)
     {
         // Rest method caller will have to dispose if it's one of those 3
+        var httpResponseSymbol = knownTypes.Get<HttpResponseMessage>();
+        var httpContentSymbol = knownTypes.Get<HttpContent>();
+        var streamSymbol = knownTypes.Get<Stream>();
+
         ShouldDisposeResponse =
-            DeserializedResultType != typeof(HttpResponseMessage)
-            && DeserializedResultType != typeof(HttpContent)
-            && DeserializedResultType != typeof(Stream);
+            (!SymbolEqualityComparer.Default.Equals(DeserializedResultType, httpResponseSymbol))
+            && (!SymbolEqualityComparer.Default.Equals(DeserializedResultType, httpContentSymbol))
+            && (!SymbolEqualityComparer.Default.Equals(DeserializedResultType, streamSymbol));
     }
 }
+
+/// <summary>
+/// RestMethodParameterInfo.
+/// </summary>
+public class RestMethodParameterInfo
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="RestMethodParameterInfo"/> class.
+    /// </summary>
+    /// <param name="name">The name.</param>
+    /// <param name="parameterInfo">The parameter information.</param>
+    public RestMethodParameterInfo(string name, IParameterSymbol parameterInfo)
+    {
+        Name = name;
+        ParameterInfo = parameterInfo;
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="RestMethodParameterInfo"/> class.
+    /// </summary>
+    /// <param name="isObjectPropertyParameter">if set to <c>true</c> [is object property parameter].</param>
+    /// <param name="parameterInfo">The parameter information.</param>
+    public RestMethodParameterInfo(bool isObjectPropertyParameter, IParameterSymbol parameterInfo)
+    {
+        IsObjectPropertyParameter = isObjectPropertyParameter;
+        ParameterInfo = parameterInfo;
+    }
+
+    /// <summary>
+    /// Gets or sets the name.
+    /// </summary>
+    /// <value>
+    /// The name.
+    /// </value>
+    public string? Name { get; set; }
+
+    /// <summary>
+    /// Gets or sets the parameter information.
+    /// </summary>
+    /// <value>
+    /// The parameter information.
+    /// </value>
+    public IParameterSymbol ParameterInfo { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether this instance is object property parameter.
+    /// </summary>
+    /// <value>
+    ///   <c>true</c> if this instance is object property parameter; otherwise, <c>false</c>.
+    /// </value>
+    public bool IsObjectPropertyParameter { get; set; }
+
+    /// <summary>
+    /// Gets or sets the parameter properties.
+    /// </summary>
+    /// <value>
+    /// The parameter properties.
+    /// </value>
+    public List<RestMethodParameterProperty> ParameterProperties { get; set; } = [];
+
+    /// <summary>
+    /// Gets or sets the type.
+    /// </summary>
+    /// <value>
+    /// The type.
+    /// </value>
+    public ParameterType Type { get; set; } = ParameterType.Normal;
+}
+
+/// <summary>
+/// RestMethodParameterProperty.
+/// </summary>
+public class RestMethodParameterProperty
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="RestMethodParameterProperty"/> class.
+    /// </summary>
+    /// <param name="name">The name.</param>
+    /// <param name="propertyInfo">The property information.</param>
+    public RestMethodParameterProperty(string name, IPropertySymbol propertyInfo)
+    {
+        Name = name;
+        PropertyInfo = propertyInfo;
+    }
+
+    /// <summary>
+    /// Gets or sets the name.
+    /// </summary>
+    /// <value>
+    /// The name.
+    /// </value>
+    public string Name { get; set; }
+
+    /// <summary>
+    /// Gets or sets the property information.
+    /// </summary>
+    /// <value>
+    /// The property information.
+    /// </value>
+    public IPropertySymbol PropertyInfo { get; set; }
+}
+
