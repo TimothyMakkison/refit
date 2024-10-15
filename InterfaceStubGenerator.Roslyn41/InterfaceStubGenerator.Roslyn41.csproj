@@ -17,6 +17,10 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="$(MsCACSharpVersion)" PrivateAssets="all" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Refit\Refit.csproj" />
+  </ItemGroup>
+
   <Target Name="SetBuildVer" AfterTargets="GetBuildVersion" BeforeTargets="SetCloudBuildVersionVars;SetCloudBuildNumberWithVersion">
     <PropertyGroup>
       <Version>$(BuildVersion)</Version>
