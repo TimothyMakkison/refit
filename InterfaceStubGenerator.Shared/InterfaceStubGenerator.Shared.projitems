@@ -22,6 +22,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)Models\ParameterModel.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\TypeConstraint.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Parser.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)RequestBuilder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)RestMethodSymbolInternal.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)WellKnownTypes.cs" />
   </ItemGroup>
