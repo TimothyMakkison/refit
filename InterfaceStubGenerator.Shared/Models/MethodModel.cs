@@ -17,8 +17,12 @@ internal enum ReturnTypeInfo : byte
     AsyncResult
 }
 
+internal record ThrowError(string errorExpression);
+
 internal record RefitBodyModel(
     HttpMethod HttpMethod,
+    string? cancellationTokenParam,
+    string? MultipartBoundary,
     ImmutableEquatableArray<ParameterFragmentModel> PathFragments,
     ImmutableEquatableArray<HeaderModel> Headers,
     ImmutableEquatableArray<HeaderParameterModel> HeaderParameters,
@@ -31,7 +35,7 @@ internal record RefitBodyModel(
 );
 
 internal record struct HeaderModel(string Key, string Value);
-internal record struct HeaderParameterModel(string Parameter, string Header);
+internal record struct HeaderParameterModel(string Parameter, string HeaderKey);
 internal record struct PropertyModel(string Parameter, string Key);
 internal record struct AuthoriseModel(string Parameter, string Scheme);
 internal record ParameterFragmentModel(string? Value, string? AccessExpression);
@@ -44,4 +48,9 @@ internal enum BodyParameterType
     Content,
     Stream,
     String,
+}
+
+internal enum ParamFrag
+{
+    Constant, Parameter, ParameterProperty
 }

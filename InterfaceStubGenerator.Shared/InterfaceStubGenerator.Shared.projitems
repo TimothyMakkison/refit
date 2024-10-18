@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)DiagnosticDescriptors.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)EmitRefitBody.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Emitter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ImmutableEquatableArray.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IncrementalValuesProviderExtensions.cs" />
