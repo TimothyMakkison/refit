@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Refit;
 
 namespace Refit.Generator;
 
@@ -510,6 +511,16 @@ namespace {refitInternalNamespace}
 
         var constraints = GenerateConstraints(methodSymbol.TypeParameters, !isImplicitInterface);
 
+        string? error = null;
+        try
+        {
+            var getAttribute = new GetAttribute("");
+        }
+        catch(Exception e)
+        {
+            error = e.ToString();
+        }
+
         return new MethodModel(
             methodSymbol.Name,
             returnType,
@@ -517,7 +528,8 @@ namespace {refitInternalNamespace}
             declaredMethod,
             returnTypeInfo,
             parameters,
-            constraints
+            constraints,
+            error
         );
     }
 }

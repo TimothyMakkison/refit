@@ -10,4 +10,8 @@
   <PropertyGroup />
   <Import Project="InterfaceStubGenerator.Shared.projitems" Label="Shared" />
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\CodeSharing\Microsoft.CodeSharing.CSharp.targets" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Refit\Refit.csproj" GeneratePathProperty="true" PrivateAssets="all"/>
+  </ItemGroup>
 </Project>

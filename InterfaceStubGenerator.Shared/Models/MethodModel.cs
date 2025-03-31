@@ -7,7 +7,8 @@ internal sealed record MethodModel(
     string DeclaredMethod,
     ReturnTypeInfo ReturnTypeMetadata,
     ImmutableEquatableArray<ParameterModel> Parameters,
-    ImmutableEquatableArray<TypeConstraint> Constraints
+    ImmutableEquatableArray<TypeConstraint> Constraints,
+    string? Error
 );
 
 internal enum ReturnTypeInfo : byte

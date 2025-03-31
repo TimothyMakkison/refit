@@ -208,6 +208,16 @@ namespace Refit.Implementation
                 ? $", new global::System.Type[] {{ {string.Join(", ", genericArray)} }}"
                 : string.Empty;
 
+        if (methodModel.Error is not null)
+        {
+            source.AppendLine(
+                $"""
+
+                 // {methodModel.Error.Replace("\r","").Replace("\n","")}
+                 """
+            );
+        }
+
         source.Append(
             @$"
             var ______arguments = {argumentsArrayString};
